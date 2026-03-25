@@ -1,36 +1,54 @@
-import os
-import requests
+import logging
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from transformers import pipeline
 
-class TelegramAI:
-    def __init__(self, token, model):
-        self.token = token
-        self.model = model
-        self.api_url = f'https://api.telegram.org/bot{self.token}/'
-        self.huggingface_api_url = 'https://api-inference.huggingface.co/models/' + model
+# Enable logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-    def send_message(self, chat_id, text):
-        requests.post(self.api_url + 'sendMessage', data={'chat_id': chat_id, 'text': text})
+# Initialize the Hugging Face pipeline for conversational AI
+chatbot = pipeline('conversational', model='microsoft/DialoGPT-medium')
 
-    def generate_response(self, prompt):
-        headers = {'Authorization': f'Bearer {os.getenv("HUGGINGFACE_API_TOKEN")}' }
-        response = requests.post(self.huggingface_api_url, headers=headers, json={'inputs': prompt})
-        return response.json()[0]['generated_text']
+# Start command handler
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('Hello! I am your AI bot. Type /help to see the available commands.')
 
-    def handle_update(self, update):
-        chat_id = update['message']['chat']['id']
-        user_message = update['message']['text']
-        bot_response = self.generate_response(user_message)
-        self.send_message(chat_id, bot_response)
+# Help command handler
+def help_command(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('/start - Start the conversation\n/help - Show this help message\n/ask <question> - Ask the AI a question')
 
-    def run(self):
-        offset = None
-        while True:
-            updates = requests.get(self.api_url + 'getUpdates', params={'offset': offset}).json()
-            for update in updates['result']:
-                self.handle_update(update)
-                offset = update['update_id'] + 1
+# Command to ask the AI a question
+def ask(update: Update, context: CallbackContext) -> None:
+    user_input = ' '.join(context.args)
+    if user_input:
+        response = chatbot(user_input)
+        update.message.reply_text(response[0]['generated_text'])
+    else:
+        update.message.reply_text('Please provide a question after /ask.')
 
-# To run the bot
-# if __name__ == '__main__':
-#     bot = TelegramAI('YOUR_TELEGRAM_BOT_TOKEN', 'YOUR_HUGGINGFACE_MODEL')
-#     bot.run()
+# Message handler for echoing messages
+def echo(update: Update, context: CallbackContext) -> None:
+    response = chatbot(update.message.text)
+    update.message.reply_text(response[0]['generated_text'])
+
+# Error handler
+def error(update: Update, context: CallbackContext) -> None:
+    logger.warning('Update %s caused error %s', update, context.error)
+
+# Main function to run the bot
+if __name__ == '__main__':
+    updater = Updater('YOUR_TELEGRAM_BOT_TOKEN')  # Add your Telegram bot token here
+
+    dp = updater.dispatcher
+    # Register command handlers
+    dp.add_handler(CommandHandler('start', start))
+    dp.add_handler(CommandHandler('help', help_command))
+    dp.add_handler(CommandHandler('ask', ask))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
+    # Register error handler
+    dp.add_error_handler(error)
+
+    # Start the bot
+    updater.start_polling()
+    updater.idle()
